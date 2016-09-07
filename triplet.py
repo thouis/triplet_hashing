@@ -29,7 +29,7 @@ def index_loop_over_triplets(labels):
                         yield (i1, i2, i3)
 
 
-def find_W(current_hashes, labels, triplet_loss):
+def find_W(current_hashes, labels, triplet_loss, hashlen):
     """ Find the weight matrix used to solve for next hash bits to append.
         (equation 8 of Zhuang et al.)
 
@@ -41,6 +41,7 @@ def find_W(current_hashes, labels, triplet_loss):
         triplet_loss: function that can be called with arguments:
             (hash1, hash2, has3) where label1 == label2 != label3
             and returns the loss for that triple.
+        hashlen: number of bits in current hashes
 
     Returns:
         new hashes approximately minimizing the triplet loss over
@@ -62,13 +63,13 @@ def find_W(current_hashes, labels, triplet_loss):
         h1 = current_hashes[idx1]
         h2 = current_hashes[idx2]
         h3 = current_hashes[idx3]
-        current_loss = triplet_loss(h1, h2, h3)
+        current_loss = triplet_loss(h1, h2, h3, hashlen)
         # slightly different notation thann the paper:
         #   0 rather than -1
-        lr_111 = triplet_loss(h1 * 2 + 1, h2 * 2 + 1, h3 * 2 + 1) - current_loss
-        lr_110 = triplet_loss(h1 * 2 + 1, h2 * 2 + 1, h3 * 2 + 0) - current_loss
-        lr_101 = triplet_loss(h1 * 2 + 1, h2 * 2 + 0, h3 * 2 + 1) - current_loss
-        lr_100 = triplet_loss(h1 * 2 + 1, h2 * 2 + 0, h3 * 2 + 0) - current_loss
+        lr_111 = triplet_loss(h1 * 2 + 1, h2 * 2 + 1, h3 * 2 + 1, hashlen + 1) - current_loss
+        lr_110 = triplet_loss(h1 * 2 + 1, h2 * 2 + 1, h3 * 2 + 0, hashlen + 1) - current_loss
+        lr_101 = triplet_loss(h1 * 2 + 1, h2 * 2 + 0, h3 * 2 + 1, hashlen + 1) - current_loss
+        lr_100 = triplet_loss(h1 * 2 + 1, h2 * 2 + 0, h3 * 2 + 0, hashlen + 1) - current_loss
         return m_inv.dot([lr_111, lr_110, lr_101, lr_100]).A.ravel().tolist()
 
     # create W_ij - weights of interactions between all pairs
@@ -88,7 +89,7 @@ def find_W(current_hashes, labels, triplet_loss):
     return W
 
 
-def compute_loss(hashes, labels, triplet_loss):
+def compute_loss(hashes, labels, triplet_loss, hashlen):
     """ compute the current loss for all triplets with the given hashes
     Args:
         (see find_W, below)
@@ -96,11 +97,11 @@ def compute_loss(hashes, labels, triplet_loss):
     """
     loss = 0.0
     for i, j, k in index_loop_over_triplets(labels):
-        loss += triplet_loss(hashes[i], hashes[j], hashes[k])
+        loss += triplet_loss(hashes[i], hashes[j], hashes[k], hashlen)
     return loss
 
 
-def find_next_bits(current_hashes, labels, triplet_loss):
+def find_next_bits(current_hashes, labels, triplet_loss, hashlen):
     """ Find the next bit to append to each hash value to greedily minimze a triplet loss.
 
 
@@ -112,6 +113,7 @@ def find_next_bits(current_hashes, labels, triplet_loss):
         triplet_loss: function that can be called with arguments:
             (hash1, hash2, has3) where label1 == label2 != label3
             and returns the loss for that triple.
+        hashlen: number of bits in current hashes
 
     Returns:
         new hashes approximately minimizing the triplet loss over
@@ -123,16 +125,16 @@ def find_next_bits(current_hashes, labels, triplet_loss):
     http://arxiv.org/abs/1603.02844
     """
 
-    old_loss = compute_loss(current_hashes, labels, triplet_loss)
+    old_loss = compute_loss(current_hashes, labels, triplet_loss, hashlen)
     print("old", old_loss)
 
     print("finding W")
-    W = find_W(current_hashes, labels, triplet_loss)
+    W = find_W(current_hashes, labels, triplet_loss, hashlen)
 
     # choose new hashes
     new_bits = [(idx % 2) for idx in range(len(current_hashes))]
     new_hashes = [h * 2 + o for h, o in zip(current_hashes, new_bits)]
-    new_loss = compute_loss(new_hashes, labels, triplet_loss)
+    new_loss = compute_loss(new_hashes, labels, triplet_loss, hashlen + 1)
 
     # convert to 1/-1 vector
     bits_as_vec = np.matrix(new_bits) * 2 - 1
@@ -147,13 +149,11 @@ def hamming(h1, h2):
     return bin(h1 ^ h2).count('1')
 
 
-def hinged_triplet_loss_maker(bitlen):
-    def hinged_triplet_loss(h1, h2, h3):
-        # print(h1, h2, h3, "->", max(0, bitlen / 2.0 - (hamming(h1, h3) - hamming(h1, h2))))
-        return max(0, bitlen / 2.0 - (hamming(h1, h3) - hamming(h1, h2)))
-    return hinged_triplet_loss
+def hinged_triplet_loss(h1, h2, h3, bitlen):
+    # print(h1, h2, h3, "->", max(0, bitlen / 2.0 - (hamming(h1, h3) - hamming(h1, h2))))
+    return max(0, bitlen / 2.0 - (hamming(h1, h3) - hamming(h1, h2)))
 
 if __name__ == '__main__':
     labels = ([0] * 3) + ([1] * 3) + ([3] * 5) + ([4] * 5)
     hashes = [0] * 3 + [1] * 3 + [5] * 5 + list(range(5))
-    find_next_bits(hashes, labels, hinged_triplet_loss_maker(4))
+    find_next_bits(hashes, labels, hinged_triplet_loss, 4)
